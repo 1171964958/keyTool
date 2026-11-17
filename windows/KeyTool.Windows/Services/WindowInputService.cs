@@ -301,7 +301,7 @@ public static class WindowInputService
         private readonly uint _currentThreadId;
         private readonly uint _foregroundThreadId;
         private readonly uint _targetThreadId;
-        private readonly bool _attachedForeground;
+        private readonly bool _attachedPair;
         private readonly bool _attachedTarget;
 
         public ForegroundInputSession(IntPtr targetWindow)
@@ -312,9 +312,13 @@ public static class WindowInputService
                 ? 0
                 : GetWindowThreadProcessId(OriginalForeground, out _);
             _targetThreadId = GetWindowThreadProcessId(targetWindow, out _);
-            _attachedForeground = _foregroundThreadId != 0
-                && _foregroundThreadId != _currentThreadId
-                && AttachThreadInput(_currentThreadId, _foregroundThreadId, true);
+            _attachedPair = _foregroundThreadId != 0
+                && _targetThreadId != 0
+                && _foregroundThreadId != _targetThreadId
+                && AttachThreadInput(
+                    _foregroundThreadId,
+                    _targetThreadId,
+                    true);
             _attachedTarget = _targetThreadId != 0
                 && _targetThreadId != _currentThreadId
                 && _targetThreadId != _foregroundThreadId
@@ -358,9 +362,12 @@ public static class WindowInputService
             {
                 AttachThreadInput(_currentThreadId, _targetThreadId, false);
             }
-            if (_attachedForeground)
+            if (_attachedPair)
             {
-                AttachThreadInput(_currentThreadId, _foregroundThreadId, false);
+                AttachThreadInput(
+                    _foregroundThreadId,
+                    _targetThreadId,
+                    false);
             }
         }
     }
@@ -1040,6 +1047,17 @@ public static class WindowInputService
             return;
         }
 
+        var messageWindow = GetKeyboardMessageWindow(rootWindow);
+        var targetThreadId = GetWindowThreadProcessId(rootWindow, out _);
+        RestoreRealActivationState(
+            rootWindow,
+            messageWindow,
+            IntPtr.Zero,
+            targetThreadId);
+        ResetTargetInputState(rootWindow, messageWindow);
+        Trace(
+            $"repair-immediate target=0x{rootWindow.ToInt64():X} "
+            + $"focus=0x{messageWindow.ToInt64():X} reset=target-key-state");
         Trace($"foreground-enter target=0x{rootWindow.ToInt64():X}");
         RecoveryUntil[rootWindow] = DateTime.UtcNow.AddMilliseconds(1500);
         Trace($"recovery-window target=0x{rootWindow.ToInt64():X} duration=1500ms");
@@ -1107,7 +1125,6 @@ public static class WindowInputService
                         messageWindow,
                         IntPtr.Zero,
                         targetThreadId);
-                    ReleaseTrackedInputState(windowHandle, messageWindow);
                     ResetPhysicalInputState(windowHandle, messageWindow);
                     Trace(
                         $"repair-done target=0x{windowHandle.ToInt64():X} "
@@ -1173,6 +1190,50 @@ public static class WindowInputService
         IntPtr windowHandle,
         IntPtr messageWindow)
     {
+        ResetTargetInputState(windowHandle, messageWindow);
+
+        var isForeground = IsWindowInForeground(windowHandle);
+        if (!isForeground)
+        {
+            return;
+        }
+
+        foreach (var virtualKey in new[]
+        {
+            VkShift,
+            VkControl,
+            VkAlt,
+            VkLeftWindows
+        })
+        {
+            keybd_event(
+                (byte)virtualKey,
+                0,
+                KeyEventKeyUp,
+                UIntPtr.Zero);
+        }
+
+        mouse_event(MouseEventLeftUp, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(MouseEventRightUp, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(MouseEventMiddleUp, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(MouseEventMove, 0, 0, 0, UIntPtr.Zero);
+
+        var keyUps = new List<Input>(0xFE - 0x08 + 1);
+        for (var virtualKey = 0x08; virtualKey <= 0xFE; virtualKey++)
+        {
+            keyUps.Add(CreateKeyboardInput(virtualKey, keyUp: true));
+        }
+        SendInput(
+            (uint)keyUps.Count,
+            keyUps.ToArray(),
+            Marshal.SizeOf<Input>());
+        Thread.Sleep(20);
+    }
+
+    private static void ResetTargetInputState(
+        IntPtr windowHandle,
+        IntPtr messageWindow)
+    {
         for (var virtualKey = 0x08; virtualKey <= 0xFE; virtualKey++)
         {
             PostMessage(
@@ -1192,46 +1253,7 @@ public static class WindowInputService
         TrySendWindowMessage(messageWindow, WmLButtonUp, IntPtr.Zero, IntPtr.Zero);
         TrySendWindowMessage(messageWindow, WmRButtonUp, IntPtr.Zero, IntPtr.Zero);
         TrySendWindowMessage(messageWindow, WmMButtonUp, IntPtr.Zero, IntPtr.Zero);
-
-        var isForeground = IsWindowInForeground(windowHandle);
-        if (isForeground)
-        {
-            foreach (var virtualKey in new[]
-            {
-                VkShift,
-                VkControl,
-                VkAlt,
-                VkLeftWindows
-            })
-            {
-                keybd_event(
-                    (byte)virtualKey,
-                    0,
-                    KeyEventKeyUp,
-                    UIntPtr.Zero);
-            }
-
-            mouse_event(MouseEventLeftUp, 0, 0, 0, UIntPtr.Zero);
-            mouse_event(MouseEventRightUp, 0, 0, 0, UIntPtr.Zero);
-            mouse_event(MouseEventMiddleUp, 0, 0, 0, UIntPtr.Zero);
-            mouse_event(MouseEventMove, 0, 0, 0, UIntPtr.Zero);
-        }
-
-        if (!isForeground)
-        {
-            return;
-        }
-
-        var keyUps = new List<Input>(0xFE - 0x08 + 1);
-        for (var virtualKey = 0x08; virtualKey <= 0xFE; virtualKey++)
-        {
-            keyUps.Add(CreateKeyboardInput(virtualKey, keyUp: true));
-        }
-        SendInput(
-            (uint)keyUps.Count,
-            keyUps.ToArray(),
-            Marshal.SizeOf<Input>());
-        Thread.Sleep(20);
+        ReleaseTrackedInputState(windowHandle, messageWindow);
     }
 
     private static bool TrySendMouseUpMessage(
