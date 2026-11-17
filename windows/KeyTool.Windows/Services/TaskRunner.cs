@@ -22,6 +22,7 @@ public sealed class TaskRunner
 
         if (task.Target is null)
         {
+            WindowInputService.TraceTask($"start-rejected task={task.Id} reason=no-target");
             SetError(task, "请先选择目标窗口。");
             return;
         }
@@ -29,6 +30,7 @@ public sealed class TaskRunner
         var resolvedTarget = WindowCatalogService.ResolveTarget(task.Target);
         if (resolvedTarget is null)
         {
+            WindowInputService.TraceTask($"start-rejected task={task.Id} reason=target-not-found");
             SetError(task, "找不到目标窗口，请刷新窗口列表并重新选择。");
             return;
         }
@@ -45,6 +47,7 @@ public sealed class TaskRunner
 
         if (task.Actions.Count == 0)
         {
+            WindowInputService.TraceTask($"start-rejected task={task.Id} reason=no-actions");
             SetError(task, "任务中没有可执行动作。");
             return;
         }
@@ -52,9 +55,14 @@ public sealed class TaskRunner
         var cancellationSource = new CancellationTokenSource();
         if (!_jobs.TryAdd(task.Id, cancellationSource))
         {
+            WindowInputService.TraceTask($"start-rejected task={task.Id} reason=already-running");
             cancellationSource.Dispose();
             return;
         }
+
+        WindowInputService.TraceTask(
+            $"start task={task.Id} target=0x{resolvedTarget.WindowHandle:X} "
+            + $"mode={task.KeyboardInputMode}");
 
         UpdateRuntime(task, () =>
         {
@@ -76,6 +84,7 @@ public sealed class TaskRunner
     {
         if (_jobs.TryRemove(taskId, out var cancellationSource))
         {
+            WindowInputService.TraceTask($"stop-requested task={taskId}");
             cancellationSource.Cancel();
             cancellationSource.Dispose();
         }
@@ -95,14 +104,25 @@ public sealed class TaskRunner
     {
         try
         {
-            var windowHandle = new IntPtr(task.Target!.WindowHandle);
             var loopIndex = 1;
             while (!cancellationToken.IsCancellationRequested
                 && (task.IsLoopInfinite || loopIndex <= task.LoopCount))
             {
-                for (var actionIndex = 0; actionIndex < task.Actions.Count; actionIndex++)
+                var actionIndex = 0;
+                while (actionIndex < task.Actions.Count)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    if (!TryResolveTarget(task, out var windowHandle))
+                    {
+                        var missingTargetMessage = "目标窗口暂时不可用，任务正在等待窗口恢复。";
+                        UpdateRuntime(task, () =>
+                            task.Runtime.ErrorMessage = missingTargetMessage);
+                        WindowInputService.TraceTask(
+                            $"waiting-for-target task={task.Id}");
+                        await Task.Delay(750, cancellationToken);
+                        continue;
+                    }
+
                     var selectedLoop = loopIndex;
                     var selectedAction = actionIndex + 1;
                     UpdateRuntime(task, () =>
@@ -110,32 +130,88 @@ public sealed class TaskRunner
                         task.Runtime.CurrentLoop = selectedLoop;
                         task.Runtime.CurrentAction = selectedAction;
                     });
-                    await WindowInputService.ExecuteAsync(
-                        task.Actions[actionIndex],
-                        windowHandle,
-                        task.KeyboardInputMode,
-                        cancellationToken
-                    );
+                    try
+                    {
+                        await WindowInputService.ExecuteAsync(
+                            task.Actions[actionIndex],
+                            windowHandle,
+                            task.KeyboardInputMode,
+                            cancellationToken
+                        );
+                        UpdateRuntime(task, () => task.Runtime.ErrorMessage = null);
+                        actionIndex++;
+                    }
+                    catch (OperationCanceledException) when (
+                        cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        WindowInputService.TraceTask(
+                            $"action-error task={task.Id} "
+                            + $"loop={loopIndex} action={selectedAction} "
+                            + $"{ex.GetType().Name}: {ex.Message}");
+                        UpdateRuntime(task, () =>
+                            task.Runtime.ErrorMessage = ex.Message);
+                        await Task.Delay(750, cancellationToken);
+                    }
                 }
                 loopIndex++;
             }
         }
         catch (OperationCanceledException)
         {
+            WindowInputService.TraceTask($"cancelled task={task.Id}");
             // Manual stop is an expected completion path.
         }
         catch (Exception ex)
         {
+            WindowInputService.TraceTask(
+                $"error task={task.Id} {ex.GetType().Name}: {ex}");
             UpdateRuntime(task, () => task.Runtime.ErrorMessage = ex.Message);
         }
         finally
         {
+            WindowInputService.TraceTask($"finish task={task.Id}");
             UpdateRuntime(task, task.Runtime.Reset);
             if (_jobs.TryRemove(task.Id, out var cancellationSource))
             {
                 cancellationSource.Dispose();
             }
         }
+    }
+
+    private static bool TryResolveTarget(
+        MacroTask task,
+        out IntPtr windowHandle)
+    {
+        windowHandle = IntPtr.Zero;
+        if (task.Target is null)
+        {
+            return false;
+        }
+
+        var resolvedTarget = WindowCatalogService.ResolveTarget(task.Target);
+        if (resolvedTarget is null)
+        {
+            return false;
+        }
+
+        if (resolvedTarget.WindowHandle != task.Target.WindowHandle
+            || resolvedTarget.Title != task.Target.Title
+            || resolvedTarget.ProcessName != task.Target.ProcessName)
+        {
+            UpdateRuntime(task, () => task.Target = resolvedTarget);
+        }
+        if (task.KeyboardInputMode == KeyboardInputMode.Adaptive)
+        {
+            WindowInputService.WatchTarget(
+                new IntPtr(resolvedTarget.WindowHandle));
+        }
+
+        windowHandle = new IntPtr(resolvedTarget.WindowHandle);
+        return true;
     }
 
     private static void SetError(MacroTask task, string message)

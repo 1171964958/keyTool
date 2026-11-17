@@ -552,6 +552,8 @@ public static class WindowInputService
         }
     }
 
+    internal static void TraceTask(string message) => Trace($"task {message}");
+
     private static async Task SendKeyboardMessageAsync(
         MacroAction action,
         IntPtr windowHandle,
