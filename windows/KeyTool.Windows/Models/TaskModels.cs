@@ -30,6 +30,14 @@ public enum ScheduleMode
     Daily
 }
 
+public enum KeyboardInputMode
+{
+    Adaptive,
+    BackgroundActivation,
+    ForegroundCompatibility,
+    BackgroundMessages
+}
+
 public sealed class ShortcutGesture : ObservableObject, IEquatable<ShortcutGesture>
 {
     private int _virtualKey;
@@ -130,7 +138,7 @@ public sealed class TaskShortcuts : ObservableObject
 public sealed class TaskSchedule : ObservableObject
 {
     private ScheduleMode _mode = ScheduleMode.Manual;
-    private int _intervalSeconds = 20;
+    private double _intervalSeconds = 20;
     private int _hour = 9;
     private int _minute;
 
@@ -147,10 +155,16 @@ public sealed class TaskSchedule : ObservableObject
         }
     }
 
-    public int IntervalSeconds
+    public double IntervalSeconds
     {
         get => _intervalSeconds;
-        set => SetProperty(ref _intervalSeconds, Math.Clamp(value, 1, 86_400));
+        set
+        {
+            if (double.IsFinite(value))
+            {
+                SetProperty(ref _intervalSeconds, Math.Clamp(value, 0.05, 86_400));
+            }
+        }
     }
 
     public int Hour
@@ -179,7 +193,7 @@ public sealed class TaskSchedule : ObservableObject
         return Mode switch
         {
             ScheduleMode.Manual => null,
-            ScheduleMode.Interval => after.AddSeconds(Math.Max(1, IntervalSeconds)),
+            ScheduleMode.Interval => after.AddSeconds(Math.Max(0.05, IntervalSeconds)),
             ScheduleMode.Daily => NextDaily(after),
             _ => null
         };
@@ -309,7 +323,8 @@ public sealed class MacroAction : ObservableObject
         get => _delaySeconds;
         set
         {
-            if (SetProperty(ref _delaySeconds, Math.Max(0.01, value)))
+            if (double.IsFinite(value)
+                && SetProperty(ref _delaySeconds, Math.Clamp(value, 0.01, 86_400)))
             {
                 NotifyPresentation();
             }
@@ -328,7 +343,7 @@ public sealed class MacroAction : ObservableObject
     [JsonIgnore]
     public string Title => Kind switch
     {
-        ActionKind.Keyboard => "按键组合",
+        ActionKind.Keyboard => "按键",
         ActionKind.MouseClick => "鼠标点击",
         ActionKind.MouseMove => "鼠标移动",
         ActionKind.Scroll => "鼠标滚动",
@@ -474,6 +489,7 @@ public sealed class MacroTask : ObservableObject
 {
     private string _name = "新任务";
     private TargetWindow? _target;
+    private KeyboardInputMode _keyboardInputMode = KeyboardInputMode.ForegroundCompatibility;
     private TaskSchedule _schedule = new();
     private bool _isScheduleEnabled;
     private int _loopCount = 1;
@@ -508,6 +524,46 @@ public sealed class MacroTask : ObservableObject
             }
         }
     }
+
+    public bool UseForegroundKeyboardInput
+    {
+        get => KeyboardInputMode == KeyboardInputMode.ForegroundCompatibility;
+        set
+        {
+            if (value)
+            {
+                KeyboardInputMode = KeyboardInputMode.ForegroundCompatibility;
+            }
+            else if (KeyboardInputMode == KeyboardInputMode.ForegroundCompatibility)
+            {
+                KeyboardInputMode = KeyboardInputMode.BackgroundActivation;
+            }
+        }
+    }
+
+    public KeyboardInputMode KeyboardInputMode
+    {
+        get => _keyboardInputMode;
+        set
+        {
+            var normalized = value == KeyboardInputMode.BackgroundActivation
+                ? KeyboardInputMode.Adaptive
+                : value;
+            if (SetProperty(ref _keyboardInputMode, normalized))
+            {
+                OnPropertyChanged(nameof(UseForegroundKeyboardInput));
+                Touch();
+            }
+        }
+    }
+
+    [JsonIgnore]
+    public Array KeyboardInputModes => new[]
+    {
+        KeyboardInputMode.Adaptive,
+        KeyboardInputMode.ForegroundCompatibility,
+        KeyboardInputMode.BackgroundMessages
+    };
 
     public ObservableCollection<MacroAction> Actions { get; set; } = new();
 
@@ -607,7 +663,7 @@ public sealed class MacroTask : ObservableObject
             }
 
             return Schedule.Mode == ScheduleMode.Interval
-                ? $"每 {Schedule.IntervalSeconds} 秒"
+                ? $"每 {Schedule.IntervalSeconds:0.##} 秒"
                 : $"每天 {Schedule.Hour:00}:{Schedule.Minute:00}";
         }
     }

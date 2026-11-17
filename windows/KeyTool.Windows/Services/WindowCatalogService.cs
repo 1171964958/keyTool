@@ -113,4 +113,66 @@ public static class WindowCatalogService
             window.WindowHandle == handle.ToInt64());
         return matchingWindow;
     }
+
+    public static TargetWindow? ResolveTarget(TargetWindow target)
+    {
+        var windows = GetOpenWindows();
+        var handleMatch = windows.FirstOrDefault(window =>
+            window.WindowHandle == target.WindowHandle);
+        if (handleMatch is not null && MatchesTarget(handleMatch, target))
+        {
+            return handleMatch;
+        }
+
+        if (!string.IsNullOrWhiteSpace(target.ProcessName))
+        {
+            var processMatches = windows.Where(window =>
+                string.Equals(
+                    window.ProcessName,
+                    target.ProcessName,
+                    StringComparison.CurrentCultureIgnoreCase)).ToList();
+            var titleMatch = processMatches.FirstOrDefault(window =>
+                string.Equals(
+                    window.Title,
+                    target.Title,
+                    StringComparison.CurrentCulture));
+            if (titleMatch is not null)
+            {
+                return titleMatch;
+            }
+            if (processMatches.Count == 1)
+            {
+                return processMatches[0];
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(target.Title))
+        {
+            var titleMatches = windows.Where(window =>
+                string.Equals(
+                    window.Title,
+                    target.Title,
+                    StringComparison.CurrentCulture)).ToList();
+            if (titleMatches.Count == 1)
+            {
+                return titleMatches[0];
+            }
+        }
+
+        return null;
+    }
+
+    private static bool MatchesTarget(TargetWindow window, TargetWindow target)
+    {
+        return (string.IsNullOrWhiteSpace(target.ProcessName)
+                || string.Equals(
+                    window.ProcessName,
+                    target.ProcessName,
+                    StringComparison.CurrentCultureIgnoreCase))
+            && (string.IsNullOrWhiteSpace(target.Title)
+                || string.Equals(
+                    window.Title,
+                    target.Title,
+                    StringComparison.CurrentCulture));
+    }
 }

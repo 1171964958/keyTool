@@ -43,6 +43,11 @@ public sealed class MainViewModel : ObservableObject
 
         foreach (var task in Tasks)
         {
+            if (task.Target is not null)
+            {
+                task.Target = WindowCatalogService.ResolveTarget(task.Target)
+                    ?? task.Target;
+            }
             AttachTask(task);
         }
 
@@ -53,7 +58,7 @@ public sealed class MainViewModel : ObservableObject
             SaveTasks();
         };
 
-        _scheduleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _scheduleTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
         _scheduleTimer.Tick += (_, _) => _scheduler.Tick(Tasks.ToList(), DateTime.Now);
 
         OpenManagementCommand = new RelayCommand(_ => Page = MainPage.Management);
@@ -164,6 +169,7 @@ public sealed class MainViewModel : ObservableObject
         _saveTimer.Stop();
         SaveTasks();
         _hotKeys.Dispose();
+        WindowInputService.ShutdownForegroundWatch();
     }
 
     public void StopAllTasks() => _runner.StopAll();
@@ -298,7 +304,7 @@ public sealed class MainViewModel : ObservableObject
                 Shortcut = new ShortcutGesture
                 {
                     VirtualKey = 0x79,
-                    Modifiers = ModifierKeys.Control,
+                    Modifiers = ModifierKeys.None,
                     KeyLabel = "F10"
                 }
             },
@@ -539,6 +545,7 @@ public sealed class MainViewModel : ObservableObject
             IsScheduleEnabled = source.IsScheduleEnabled,
             LoopCount = source.LoopCount,
             IsLoopInfinite = source.IsLoopInfinite,
+            KeyboardInputMode = source.KeyboardInputMode,
             Target = source.Target is null
                 ? null
                 : new TargetWindow

@@ -9,7 +9,7 @@ public sealed class TaskSchedulerService
 {
     private sealed record ScheduleSignature(
         ScheduleMode Mode,
-        int IntervalSeconds,
+        double IntervalSeconds,
         int Hour,
         int Minute
     );

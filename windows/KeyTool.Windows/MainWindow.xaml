@@ -465,11 +465,31 @@
                                     <Button Grid.Column="1" Content="刷新" Command="{Binding RefreshWindowsCommand}" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" />
                                     <Button Grid.Column="2" Content="使用当前前台" Command="{Binding CaptureForegroundWindowCommand}" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" />
                                 </Grid>
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="110" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="按键输入方式" VerticalAlignment="Center" />
+                                    <ComboBox
+                                        Grid.Column="1"
+                                        ItemsSource="{Binding SelectedTask.KeyboardInputModes}"
+                                        SelectedItem="{Binding SelectedTask.KeyboardInputMode, Mode=TwoWay}"
+                                        MinHeight="34"
+                                        Padding="8,4"
+                                        VerticalContentAlignment="Center">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Converter={StaticResource EnumDisplay}}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                </Grid>
                                 <TextBlock
-                                    Text="输入事件通过窗口消息发送到目标窗口，不主动切换前台窗口。部分游戏、浏览器和受保护程序可能忽略后台消息。"
+                                    Text="“自适应”会按目标当前状态切换：游戏在前台时直接使用前台兼容，切到其他窗口后才使用后台无感；后台部分仍属实验兼容，若异常请切回“前台兼容”。"
                                     Style="{StaticResource MutedText}"
                                     TextWrapping="Wrap"
-                                    Margin="0,9,0,0" />
+                                    Margin="0,6,0,0" />
                             </StackPanel>
                         </Border>
 
@@ -529,7 +549,7 @@
                                         Click="OpenAttachedContextMenu">
                                         <Button.ContextMenu>
                                             <ContextMenu>
-                                                <MenuItem Header="按键组合" Command="{Binding PlacementTarget.DataContext.AddActionCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}" CommandParameter="Keyboard" />
+                                                <MenuItem Header="按键" Command="{Binding PlacementTarget.DataContext.AddActionCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}" CommandParameter="Keyboard" />
                                                 <MenuItem Header="鼠标点击" Command="{Binding PlacementTarget.DataContext.AddActionCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}" CommandParameter="MouseClick" />
                                                 <MenuItem Header="鼠标移动" Command="{Binding PlacementTarget.DataContext.AddActionCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}" CommandParameter="MouseMove" />
                                                 <MenuItem Header="鼠标滚动" Command="{Binding PlacementTarget.DataContext.AddActionCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}" CommandParameter="Scroll" />
@@ -644,8 +664,8 @@
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
                                                         <TextBlock Text="等待" VerticalAlignment="Center" Margin="0,0,6,0" />
-                                                        <TextBox Grid.Column="1" Text="{Binding DelaySeconds, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputBox}" />
-                                                        <TextBlock Grid.Column="2" Text="秒" VerticalAlignment="Center" Margin="7,0,0,0" />
+                                                        <TextBox Grid.Column="1" Text="{Binding DelaySeconds, UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" Style="{StaticResource InputBox}" />
+                                                        <TextBlock Grid.Column="2" Text="秒（支持小数）" VerticalAlignment="Center" Margin="7,0,0,0" />
                                                     </Grid>
                                                 </StackPanel>
                                             </Border>
@@ -692,7 +712,7 @@
                                     FontSize="11"
                                     Margin="110,7,0,0" />
                                 <TextBlock
-                                    Text="支持 Ctrl、Alt、Shift、Win 修饰键。快捷键在 KeyTool 位于托盘时仍然生效。"
+                                    Text="支持单个按键，也可继续使用 Ctrl、Alt、Shift、Win 组合键。快捷键在 KeyTool 位于托盘时仍然生效。"
                                     Style="{StaticResource MutedText}"
                                     Margin="0,9,0,0" />
                             </StackPanel>
@@ -739,8 +759,8 @@
                                 </Grid>
                                 <StackPanel Orientation="Horizontal" Visibility="{Binding SelectedTask.Schedule.IsInterval, Converter={StaticResource BoolToVisibility}}">
                                     <TextBlock Text="时间间隔" VerticalAlignment="Center" Width="110" />
-                                    <TextBox Text="{Binding SelectedTask.Schedule.IntervalSeconds, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputBox}" Width="100" />
-                                    <TextBlock Text="秒（1–86,400）" VerticalAlignment="Center" Margin="7,0,0,0" Style="{StaticResource MutedText}" />
+                                    <TextBox Text="{Binding SelectedTask.Schedule.IntervalSeconds, UpdateSourceTrigger=LostFocus, ValidatesOnExceptions=True}" Style="{StaticResource InputBox}" Width="100" />
+                                    <TextBlock Text="秒（0.05–86,400，支持小数）" VerticalAlignment="Center" Margin="7,0,0,0" Style="{StaticResource MutedText}" />
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Visibility="{Binding SelectedTask.Schedule.IsDaily, Converter={StaticResource BoolToVisibility}}">
                                     <TextBlock Text="每天时间" VerticalAlignment="Center" Width="110" />

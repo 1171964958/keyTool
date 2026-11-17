@@ -26,6 +26,23 @@ public sealed class TaskRunner
             return;
         }
 
+        var resolvedTarget = WindowCatalogService.ResolveTarget(task.Target);
+        if (resolvedTarget is null)
+        {
+            SetError(task, "找不到目标窗口，请刷新窗口列表并重新选择。");
+            return;
+        }
+        if (resolvedTarget.WindowHandle != task.Target.WindowHandle
+            || resolvedTarget.Title != task.Target.Title
+            || resolvedTarget.ProcessName != task.Target.ProcessName)
+        {
+            UpdateRuntime(task, () => task.Target = resolvedTarget);
+        }
+        if (task.KeyboardInputMode == KeyboardInputMode.Adaptive)
+        {
+            WindowInputService.WatchTarget(new IntPtr(resolvedTarget.WindowHandle));
+        }
+
         if (task.Actions.Count == 0)
         {
             SetError(task, "任务中没有可执行动作。");
@@ -96,6 +113,7 @@ public sealed class TaskRunner
                     await WindowInputService.ExecuteAsync(
                         task.Actions[actionIndex],
                         windowHandle,
+                        task.KeyboardInputMode,
                         cancellationToken
                     );
                 }

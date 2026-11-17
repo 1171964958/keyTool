@@ -39,7 +39,7 @@ public sealed class ShortcutCaptureButton : Button
     protected override void OnClick()
     {
         _recording = true;
-        Content = "请按快捷键…";
+        Content = "请按任意键…";
         Focus();
         Keyboard.Focus(this);
     }
@@ -65,16 +65,15 @@ public sealed class ShortcutCaptureButton : Button
             or Key.LeftAlt or Key.RightAlt
             or Key.LWin or Key.RWin)
         {
-            Content = $"请继续按键… {Keyboard.Modifiers}";
+            Content = $"请按任意键… {Keyboard.Modifiers}";
             return;
         }
 
         var modifiers = Keyboard.Modifiers;
         var virtualKey = KeyInterop.VirtualKeyFromKey(key);
-        var isFunctionKey = virtualKey is >= 0x70 and <= 0x87;
-        if (modifiers == ModifierKeys.None && !isFunctionKey)
+        if (virtualKey == 0)
         {
-            Content = "请包含 Ctrl / Alt / Shift / Win";
+            Content = "请按任意键…";
             return;
         }
 
