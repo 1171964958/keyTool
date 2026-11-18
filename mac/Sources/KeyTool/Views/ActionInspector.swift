@@ -6,24 +6,19 @@ struct ActionInspector: View {
     @Binding var action: MacroAction
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("动作设置")
-                .font(.subheadline.weight(.semibold))
-
-            switch action {
-            case .keyboard(let keyboard):
-                KeyComboEditor(keyboardAction: keyboard) { updated in
-                    action = .keyboard(updated)
-                }
-            case .mouseClick(let click):
-                mouseClickEditor(click)
-            case .mouseMove(let move):
-                mouseMoveEditor(move)
-            case .scroll(let scroll):
-                scrollEditor(scroll)
-            case .delay(let delay):
-                delayEditor(delay)
+        switch action {
+        case .keyboard(let keyboard):
+            KeyComboEditor(keyboardAction: keyboard) { updated in
+                action = .keyboard(updated)
             }
+        case .mouseClick(let click):
+            mouseClickEditor(click)
+        case .mouseMove(let move):
+            mouseMoveEditor(move)
+        case .scroll(let scroll):
+            scrollEditor(scroll)
+        case .delay(let delay):
+            delayEditor(delay)
         }
     }
 
@@ -66,12 +61,14 @@ struct ActionInspector: View {
                 }
                 .frame(width: 110)
 
-                Button("使用当前鼠标位置") {
+                Button {
                     var updated = click
                     let point = CGEvent(source: nil)?.location ?? .zero
                     updated.x = point.x
                     updated.y = point.y
                     action = .mouseClick(updated)
+                } label: {
+                    Label("使用当前鼠标位置", systemImage: "cursorarrow.rays")
                 }
                 .buttonStyle(.bordered)
             }
@@ -102,12 +99,14 @@ struct ActionInspector: View {
                 )
             )
 
-            Button("使用当前鼠标位置") {
+            Button {
                 var updated = move
                 let point = CGEvent(source: nil)?.location ?? .zero
                 updated.x = point.x
                 updated.y = point.y
                 action = .mouseMove(updated)
+            } label: {
+                Label("使用当前鼠标位置", systemImage: "cursorarrow.rays")
             }
             .buttonStyle(.bordered)
         }
@@ -191,39 +190,100 @@ private struct KeyComboEditor: View {
     @StateObject private var recorder = KeyRecorderState()
 
     var body: some View {
-        HStack(spacing: 12) {
-            Text(keyboardAction.displayName)
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
-                .frame(minWidth: 110, minHeight: 34)
-                .padding(.horizontal, 12)
-                .background(
-                    Color.primary.opacity(0.055),
-                    in: RoundedRectangle(cornerRadius: 8)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(recorder.isRecording ? Color.indigo : Color.primary.opacity(0.10))
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 10) {
+                Text(keyboardAction.displayName)
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .frame(minWidth: 116, minHeight: 34)
+                    .padding(.horizontal, 12)
+                    .background(
+                        recorder.isRecording
+                            ? Color.orange.opacity(0.08)
+                            : Color.primary.opacity(0.055),
+                        in: RoundedRectangle(cornerRadius: 8)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                recorder.isRecording
+                                    ? Color.orange.opacity(0.42)
+                                    : Color.primary.opacity(0.10)
+                            )
+                    }
+                    .accessibilityLabel("当前按键组合 \(keyboardAction.displayName)")
+
+                Button {
+                    recorder.isRecording ? cancelRecording() : startRecording()
+                } label: {
+                    Label(
+                        recorder.isRecording ? "请按快捷键…" : "录入快捷键",
+                        systemImage: recorder.isRecording
+                            ? "record.circle"
+                            : "keyboard"
+                    )
                 }
-                .accessibilityLabel("当前按键组合 \(keyboardAction.displayName)")
+                .buttonStyle(.borderedProminent)
+                .tint(recorder.isRecording ? .orange : .indigo)
 
-            Button(recorder.isRecording ? "请按快捷键…" : "录入快捷键") {
-                recorder.isRecording ? cancelRecording() : startRecording()
+                if recorder.isRecording {
+                    Button("取消", action: cancelRecording)
+                        .buttonStyle(.bordered)
+                }
+
+                repeatCountControl
+
+                Spacer(minLength: 0)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(recorder.isRecording ? .orange : .indigo)
-
-            if recorder.isRecording {
-                Button("取消", action: cancelRecording)
-                    .buttonStyle(.borderless)
-            }
-
-            Spacer()
 
             Text("可同时按下 ⌃ ⌥ ⇧ ⌘")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .onDisappear(perform: cancelRecording)
+    }
+
+    private var repeatCountControl: some View {
+        HStack(spacing: 7) {
+            Label("次数", systemImage: "repeat")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.secondary)
+
+            TextField(
+                "次数",
+                value: repeatCountBinding,
+                format: .number
+            )
+            .textFieldStyle(.plain)
+            .multilineTextAlignment(.trailing)
+            .monospacedDigit()
+            .frame(width: 48)
+            .accessibilityLabel("按键重复次数")
+            .help("重复发送此按键的次数，范围 1 到 10000")
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 32)
+        .background(
+            Color.primary.opacity(0.05),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.10))
+        }
+    }
+
+    private var repeatCountBinding: Binding<Int> {
+        Binding(
+            get: { keyboardAction.repeatCount },
+            set: { newValue in
+                var updated = keyboardAction
+                updated.repeatCount = min(
+                    max(newValue, KeyboardAction.repeatCountRange.lowerBound),
+                    KeyboardAction.repeatCountRange.upperBound
+                )
+                onChange(updated)
+            }
+        )
     }
 
     private func startRecording() {

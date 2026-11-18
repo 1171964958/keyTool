@@ -167,7 +167,10 @@ enum MacroAction: Codable, Identifiable, Equatable {
     var summary: String {
         switch self {
         case .keyboard(let action):
-            return action.displayName
+            let repetition = action.repeatCount > 1
+                ? " × \(action.repeatCount)"
+                : ""
+            return action.displayName + repetition
         case .mouseClick(let action):
             return "\(action.button.label)键 @ \(Int(action.x)), \(Int(action.y))"
         case .mouseMove(let action):
@@ -181,10 +184,63 @@ enum MacroAction: Codable, Identifiable, Equatable {
 }
 
 struct KeyboardAction: Codable, Identifiable, Equatable {
+    static let repeatCountRange = 1...10_000
+
     var id = UUID()
     var keyCode: UInt16
     var modifiers: UInt64
     var keyLabel: String
+    var repeatCount: Int
+
+    init(
+        id: UUID = UUID(),
+        keyCode: UInt16,
+        modifiers: UInt64,
+        keyLabel: String,
+        repeatCount: Int = 1
+    ) {
+        self.id = id
+        self.keyCode = keyCode
+        self.modifiers = modifiers
+        self.keyLabel = keyLabel
+        self.repeatCount = min(
+            max(repeatCount, Self.repeatCountRange.lowerBound),
+            Self.repeatCountRange.upperBound
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case keyCode
+        case modifiers
+        case keyLabel
+        case repeatCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        keyCode = try container.decode(UInt16.self, forKey: .keyCode)
+        modifiers = try container.decode(UInt64.self, forKey: .modifiers)
+        keyLabel = try container.decode(String.self, forKey: .keyLabel)
+        let decodedRepeatCount = try container.decodeIfPresent(
+            Int.self,
+            forKey: .repeatCount
+        ) ?? 1
+        repeatCount = min(
+            max(decodedRepeatCount, Self.repeatCountRange.lowerBound),
+            Self.repeatCountRange.upperBound
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(keyCode, forKey: .keyCode)
+        try container.encode(modifiers, forKey: .modifiers)
+        try container.encode(keyLabel, forKey: .keyLabel)
+        try container.encode(repeatCount, forKey: .repeatCount)
+    }
 
     var displayName: String {
         Self.modifierSymbols(modifiers)

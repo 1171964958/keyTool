@@ -72,12 +72,14 @@ private struct ShortcutRecorderRow: View {
 
                 if state.isRecording {
                     Button("取消", action: cancelRecording)
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.bordered)
                 } else if shortcut != nil {
-                    Button("清除") {
+                    Button {
                         onChange(nil)
+                    } label: {
+                        Label("清除", systemImage: "xmark")
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.bordered)
                 }
 
                 Spacer()

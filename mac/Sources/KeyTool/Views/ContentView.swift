@@ -126,11 +126,31 @@ private struct AppSidebar: View {
         VStack(spacing: 0) {
             List(selection: $selection) {
                 Section {
-                    Label("任务管理", systemImage: "square.grid.2x2")
+                    HStack(spacing: 8) {
+                        Label("任务管理", systemImage: "square.grid.2x2")
+
+                        Spacer(minLength: 8)
+
+                        if !runner.runningTaskIDs.isEmpty {
+                            Label(
+                                "\(runner.runningTaskIDs.count)",
+                                systemImage: "waveform.path.ecg"
+                            )
+                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Color.orange.opacity(0.10),
+                                in: Capsule()
+                            )
+                            .help("\(runner.runningTaskIDs.count) 个任务正在执行")
+                        }
+                    }
                         .tag(AppDestination.management)
                 }
 
-                Section("任务") {
+                Section {
                     ForEach(store.tasks) { task in
                         TaskSidebarRow(
                             task: task,
@@ -150,6 +170,20 @@ private struct AppSidebar: View {
                             }
                         }
                     }
+                } header: {
+                    HStack(spacing: 6) {
+                        Text("任务")
+                        Text("\(store.tasks.count)")
+                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(
+                                Color.primary.opacity(0.055),
+                                in: Capsule()
+                            )
+                        Spacer()
+                    }
                 }
             }
             .listStyle(.sidebar)
@@ -159,6 +193,18 @@ private struct AppSidebar: View {
             HStack(spacing: 8) {
                 Button(action: createTask) {
                     Label("新建任务", systemImage: "plus")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.indigo)
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .background(
+                            Color.indigo.opacity(0.09),
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.indigo.opacity(0.14))
+                        }
                 }
                 .buttonStyle(.borderless)
 
@@ -170,7 +216,7 @@ private struct AppSidebar: View {
                 } label: {
                     Image(systemName: "plus.square.on.square")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(KeyToolIconButtonStyle(tint: .secondary))
                 .disabled(store.selectedTask == nil)
                 .help("复制当前任务")
                 .accessibilityLabel("复制当前任务")
@@ -181,7 +227,7 @@ private struct AppSidebar: View {
                 } label: {
                     Image(systemName: "trash")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(KeyToolIconButtonStyle(tint: .red))
                 .disabled(store.selectedTask == nil)
                 .help("删除当前任务")
                 .accessibilityLabel("删除当前任务")
@@ -197,41 +243,84 @@ private struct TaskSidebarRow: View {
     let progress: RunProgress?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 7) {
-                Text(task.name.isEmpty ? "未命名任务" : task.name)
-                    .font(.headline)
-                    .lineLimit(1)
+        HStack(alignment: .center, spacing: 9) {
+            Image(systemName: statusIcon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(progress == nil ? Color.indigo : Color.white)
+                .frame(width: 30, height: 30)
+                .background(
+                    progress == nil
+                        ? Color.indigo.opacity(0.09)
+                        : Color.orange,
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
+                .accessibilityHidden(true)
 
-                if progress != nil {
-                    Circle()
-                        .fill(Color.orange)
-                        .frame(width: 7, height: 7)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Text(task.name.isEmpty ? "未命名任务" : task.name)
+                        .font(.headline)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 4)
+
+                    if let progress {
+                        Label(runningLabel(progress), systemImage: "waveform.path.ecg")
+                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(.orange)
+                            .lineLimit(1)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Color.orange.opacity(0.10),
+                                in: Capsule()
+                            )
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    Image(systemName: task.isLoopInfinite ? "infinity" : "repeat")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                         .accessibilityHidden(true)
-                }
-            }
 
-            HStack(spacing: 6) {
-                Image(systemName: task.isLoopInfinite ? "infinity" : "repeat")
-                    .font(.caption)
+                    Text(scheduleSummary)
+                        .lineLimit(1)
 
-                Text(scheduleSummary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    if progress == nil {
+                        Text("·")
+                            .foregroundStyle(.tertiary)
+                        Text("\(task.actions.count) 个动作")
+                            .lineLimit(1)
+                    }
 
-                Spacer()
+                    Spacer(minLength: 4)
 
-                if let progress {
-                    Text(progressLabel(progress))
-                        .font(.caption.monospacedDigit().weight(.semibold))
+                    if let progress {
+                        HStack(spacing: 4) {
+                            Image(systemName: "timer")
+                                .accessibilityHidden(true)
+                            TimelineView(.periodic(from: .now, by: 1)) { context in
+                                Text(
+                                    progress.elapsedTimeDescription(at: context.date)
+                                )
+                                .monospacedDigit()
+                            }
+                        }
                         .foregroundStyle(.orange)
-                        .accessibilityLabel(progressAccessibilityLabel(progress))
+                        .fixedSize()
+                    }
                 }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
+    }
+
+    private var statusIcon: String {
+        progress == nil ? "command" : "waveform.path.ecg"
     }
 
     private var scheduleSummary: String {
@@ -252,14 +341,9 @@ private struct TaskSidebarRow: View {
         }
     }
 
-    private func progressLabel(_ progress: RunProgress) -> String {
-        progress.totalLoops.map { "\(progress.currentLoop)/\($0)" } ?? "∞"
-    }
-
-    private func progressAccessibilityLabel(_ progress: RunProgress) -> String {
-        if let totalLoops = progress.totalLoops {
-            return "正在执行，第 \(progress.currentLoop) 轮，共 \(totalLoops) 轮"
-        }
-        return "正在执行，第 \(progress.currentLoop) 轮，无限循环"
+    private func runningLabel(_ progress: RunProgress) -> String {
+        progress.totalLoops.map {
+            "\(progress.currentLoop)/\($0)"
+        } ?? "\(progress.currentLoop) 轮"
     }
 }

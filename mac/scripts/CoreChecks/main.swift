@@ -24,7 +24,8 @@ let task = MacroTask(
             KeyboardAction(
                 keyCode: 0,
                 modifiers: 1_048_576,
-                keyLabel: "A"
+                keyLabel: "A",
+                repeatCount: 4
             )
         ),
         .delay(DelayAction(seconds: 0.25))
@@ -51,6 +52,48 @@ let task = MacroTask(
 let encodedTask = try JSONEncoder().encode(task)
 let decodedTask = try JSONDecoder().decode(MacroTask.self, from: encodedTask)
 check(decodedTask == task, "Task should round-trip through JSON")
+check(
+    decodedTask.actions.first?.summary == "⌘A × 4",
+    "Keyboard action summaries should include repeat counts"
+)
+
+let legacyKeyboardJSON = try JSONEncoder().encode(
+    KeyboardAction(
+        keyCode: 0,
+        modifiers: UInt64(NSEvent.ModifierFlags.command.rawValue),
+        keyLabel: "A"
+    )
+)
+var legacyKeyboardObject = try JSONSerialization.jsonObject(
+    with: legacyKeyboardJSON
+) as! [String: Any]
+legacyKeyboardObject.removeValue(forKey: "repeatCount")
+let migratedKeyboard = try JSONDecoder().decode(
+    KeyboardAction.self,
+    from: JSONSerialization.data(withJSONObject: legacyKeyboardObject)
+)
+check(
+    migratedKeyboard.repeatCount == 1,
+    "Legacy keyboard actions should default to one press"
+)
+check(
+    KeyboardAction(
+        keyCode: 0,
+        modifiers: 0,
+        keyLabel: "A",
+        repeatCount: 0
+    ).repeatCount == 1,
+    "Keyboard repeat counts should clamp to the supported minimum"
+)
+check(
+    KeyboardAction(
+        keyCode: 0,
+        modifiers: 0,
+        keyLabel: "A",
+        repeatCount: 10_001
+    ).repeatCount == 10_000,
+    "Keyboard repeat counts should clamp to the supported maximum"
+)
 
 var legacyJSON = try JSONSerialization.jsonObject(with: encodedTask) as! [String: Any]
 legacyJSON.removeValue(forKey: "loopCount")
@@ -139,6 +182,27 @@ check(
         && dailyComponents.hour == 9
         && dailyComponents.minute == 0,
     "Daily schedules should find the next configured time"
+)
+
+let runStartedAt = Date(timeIntervalSince1970: 1_700_000_000)
+let runningProgress = RunProgress(
+    currentLoop: 2,
+    totalLoops: 5,
+    currentAction: 3,
+    totalActions: 4,
+    startedAt: runStartedAt
+)
+check(
+    runningProgress.elapsedTimeDescription(
+        at: runStartedAt.addingTimeInterval(65)
+    ) == "01:05",
+    "Execution time should format minutes and seconds"
+)
+check(
+    runningProgress.elapsedTimeDescription(
+        at: runStartedAt.addingTimeInterval(3_661)
+    ) == "1:01:01",
+    "Execution time should include hours when needed"
 )
 
 print("\(passed) core checks passed")

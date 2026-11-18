@@ -303,25 +303,51 @@ private struct TaskManagementRow: View {
             .padding(16)
 
             if let progress {
-                VStack(spacing: 6) {
-                    HStack {
-                        Text(progressText(progress))
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    HStack(spacing: 9) {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(.orange)
+                            .frame(width: 14, height: 14)
+                            .accessibilityHidden(true)
+
+                        Text(
+                            "执行时间 "
+                                + progress.elapsedTimeDescription(at: context.date)
+                        )
+                        .font(.caption.monospacedDigit().weight(.medium))
+                        .foregroundStyle(.orange)
+
+                        Text(progress.progressDescription)
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("停止任务", action: onRun)
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(.red)
-                    }
+                            .lineLimit(1)
 
-                    if let fraction = progress.fractionComplete {
-                        ProgressView(value: fraction)
-                            .tint(.orange)
-                    } else {
-                        ProgressView()
+                        Spacer(minLength: 8)
+
+                        if let fraction = progress.fractionComplete {
+                            ProgressView(value: fraction)
+                                .controlSize(.mini)
+                                .tint(.orange)
+                                .frame(maxWidth: 180)
+                        }
+
+                        Button("停止任务", action: onRun)
+                            .buttonStyle(.bordered)
                             .controlSize(.small)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .tint(.red)
                     }
+                    .padding(.horizontal, 10)
+                    .frame(height: 36)
+                    .background(
+                        Color.orange.opacity(0.055),
+                        in: RoundedRectangle(cornerRadius: 9)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 9)
+                            .stroke(Color.orange.opacity(0.16))
+                    }
+                    .accessibilityElement(children: .combine)
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 14)
@@ -396,12 +422,6 @@ private struct TaskManagementRow: View {
         }
     }
 
-    private func progressText(_ progress: RunProgress) -> String {
-        let loop = progress.totalLoops.map {
-            "第 \(progress.currentLoop)/\($0) 轮"
-        } ?? "第 \(progress.currentLoop) 轮 · 无限循环"
-        return "\(loop) · 动作 \(progress.currentAction)/\(progress.totalActions)"
-    }
 }
 
 private struct TaskMetadataTag: View {

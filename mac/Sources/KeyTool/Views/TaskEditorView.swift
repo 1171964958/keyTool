@@ -60,37 +60,7 @@ struct TaskEditorView: View {
             Spacer()
 
             if let progress = runner.progress(for: task.id) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Label("执行中", systemImage: "waveform.path.ecg")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.orange)
-
-                    Text(progressDescription(progress))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-
-                    if let fraction = progress.fractionComplete {
-                        ProgressView(value: fraction)
-                            .progressViewStyle(.linear)
-                            .tint(.orange)
-                            .frame(width: 132)
-                    } else {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(.orange)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(
-                    Color.orange.opacity(0.10),
-                    in: RoundedRectangle(cornerRadius: 10)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.orange.opacity(0.28))
-                }
-                .accessibilityElement(children: .combine)
+                CompactExecutionStatus(progress: progress)
             }
 
             Button {
@@ -117,19 +87,67 @@ struct TaskEditorView: View {
         .padding(.vertical, 16)
         .background(.regularMaterial)
     }
-
-    private func progressDescription(_ progress: RunProgress) -> String {
-        if let totalLoops = progress.totalLoops {
-            return "第 \(progress.currentLoop)/\(totalLoops) 轮 · "
-                + "动作 \(progress.currentAction)/\(progress.totalActions)"
-        }
-        return "第 \(progress.currentLoop) 轮 · 无限循环 · "
-            + "动作 \(progress.currentAction)/\(progress.totalActions)"
-    }
 }
 
 private final class ActionSelectionState: ObservableObject {
     @Published var actionID: UUID?
+}
+
+private struct CompactExecutionStatus: View {
+    let progress: RunProgress
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            VStack(spacing: 4) {
+                HStack(spacing: 7) {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(.orange)
+                        .frame(width: 14, height: 14)
+                        .accessibilityHidden(true)
+
+                    Text("执行中")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
+
+                    Text(
+                        "执行时间 "
+                            + progress.elapsedTimeDescription(at: context.date)
+                    )
+                    .font(.caption.monospacedDigit().weight(.medium))
+
+                    Text(progress.progressDescription)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                if let fraction = progress.fractionComplete {
+                    ProgressView(value: fraction)
+                        .progressViewStyle(.linear)
+                        .controlSize(.mini)
+                        .tint(.orange)
+                }
+            }
+            .padding(.horizontal, 11)
+            .frame(height: 40)
+            .background(
+                Color.orange.opacity(0.08),
+                in: RoundedRectangle(cornerRadius: 9)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(Color.orange.opacity(0.24))
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                "正在执行，执行时间 "
+                    + progress.elapsedTimeDescription(at: context.date)
+                    + "，"
+                    + progress.progressDescription
+            )
+        }
+    }
 }
 
 private extension MacroTask {
@@ -324,8 +342,21 @@ struct InspectorCard<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label(title, systemImage: icon)
-                .font(.headline)
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.indigo)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        Color.indigo.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 8)
+                    )
+                    .accessibilityHidden(true)
+
+                Text(title)
+                    .font(.headline)
+            }
+
             content
         }
         .padding(18)
@@ -337,5 +368,6 @@ struct InspectorCard<Content: View>: View {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(Color.primary.opacity(0.08))
         }
+        .shadow(color: Color.black.opacity(0.035), radius: 10, y: 3)
     }
 }

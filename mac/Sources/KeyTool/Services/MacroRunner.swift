@@ -1,28 +1,5 @@
 import SwiftUI
 
-struct RunProgress: Equatable {
-    let currentLoop: Int
-    let totalLoops: Int?
-    let currentAction: Int
-    let totalActions: Int
-
-    var fractionComplete: Double? {
-        guard
-            let totalLoops,
-            totalLoops > 0,
-            totalActions > 0
-        else {
-            return nil
-        }
-        let completedActions = (currentLoop - 1) * totalActions
-            + max(0, currentAction - 1)
-        return min(
-            1,
-            Double(completedActions) / Double(totalLoops * totalActions)
-        )
-    }
-}
-
 @MainActor
 final class MacroRunner: ObservableObject {
     @Published private(set) var runningTaskIDs: Set<UUID> = []
@@ -60,12 +37,14 @@ final class MacroRunner: ObservableObject {
             return
         }
 
+        let startedAt = Date()
         runningTaskIDs.insert(task.id)
         progressByTask[task.id] = RunProgress(
             currentLoop: 1,
             totalLoops: task.isLoopInfinite ? nil : task.loopCount,
             currentAction: 1,
-            totalActions: task.actions.count
+            totalActions: task.actions.count,
+            startedAt: startedAt
         )
         errorMessage = nil
 
@@ -81,7 +60,8 @@ final class MacroRunner: ObservableObject {
                             currentLoop: loopIndex,
                             totalLoops: task.isLoopInfinite ? nil : task.loopCount,
                             currentAction: actionIndex + 1,
-                            totalActions: task.actions.count
+                            totalActions: task.actions.count,
+                            startedAt: startedAt
                         )
                         try await InputEngine.perform(action, to: target.processID)
                     }

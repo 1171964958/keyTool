@@ -41,23 +41,6 @@ struct ActionSection: View {
             }
 
             actionEditor
-
-            Menu {
-                Button("按键组合") { append(.keyboard(.defaultKeyboardAction)) }
-                Button("鼠标点击") { append(.mouseClick(.atCurrentPosition(button: .left))) }
-                Button("鼠标移动") { append(.mouseMove(.atCurrentPosition)) }
-                Button("鼠标滚动") {
-                    append(.scroll(ScrollAction(deltaX: 0, deltaY: -120)))
-                }
-                Divider()
-                Button("等待") {
-                    append(.delay(DelayAction(seconds: 0.5)))
-                }
-            } label: {
-                Label("添加动作", systemImage: "plus")
-            }
-            .menuStyle(.borderedButton)
-            .fixedSize()
         }
     }
 
@@ -79,25 +62,29 @@ struct ActionSection: View {
 
                 Spacer()
 
-                if recorder.isRecording {
-                    if recorder.recordingTaskID == taskID {
-                        Button("停止并保存") {
-                            let recordedActions = recorder.stop()
-                            actions.append(contentsOf: recordedActions)
-                            selectedActionID = recordedActions.last?.id
+                HStack(spacing: 8) {
+                    addActionMenu
+
+                    if recorder.isRecording {
+                        if recorder.recordingTaskID == taskID {
+                            Button("停止并保存") {
+                                let recordedActions = recorder.stop()
+                                actions.append(contentsOf: recordedActions)
+                                selectedActionID = recordedActions.last?.id
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                        } else {
+                            Text("正在录制其他任务")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Button("录制操作") {
+                            recorder.start(taskID: taskID)
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(.red)
-                    } else {
-                        Text("正在录制其他任务")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
-                } else {
-                    Button("录制操作") {
-                        recorder.start(taskID: taskID)
-                    }
-                    .buttonStyle(.borderedProminent)
                 }
             }
 
@@ -109,6 +96,38 @@ struct ActionSection: View {
         }
     }
 
+    private var addActionMenu: some View {
+        Menu {
+            Button("按键组合") { append(.keyboard(.defaultKeyboardAction)) }
+            Button("鼠标点击") { append(.mouseClick(.atCurrentPosition(button: .left))) }
+            Button("鼠标移动") { append(.mouseMove(.atCurrentPosition)) }
+            Button("鼠标滚动") {
+                append(.scroll(ScrollAction(deltaX: 0, deltaY: -120)))
+            }
+            Divider()
+            Button("等待") {
+                append(.delay(DelayAction(seconds: 0.5)))
+            }
+        } label: {
+            Label("添加动作", systemImage: "plus")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.indigo)
+                .padding(.horizontal, 11)
+                .frame(height: 30)
+                .background(
+                    Color.indigo.opacity(0.09),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.indigo.opacity(0.16))
+                }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .accessibilityLabel("添加动作")
+    }
+
     @ViewBuilder
     private var actionEditor: some View {
         if
@@ -116,7 +135,25 @@ struct ActionSection: View {
             let index = actions.firstIndex(where: { $0.id == selectedActionID })
         {
             Divider()
-            ActionInspector(action: $actions[index])
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Label("动作设置", systemImage: "slider.horizontal.3")
+                        .font(.subheadline.weight(.semibold))
+
+                    Text(actions[index].title)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.indigo)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.indigo.opacity(0.09), in: Capsule())
+
+                    Spacer()
+                }
+
+                ActionInspector(action: $actions[index])
+            }
+            .keyToolInsetPanel()
         }
     }
 
@@ -153,13 +190,19 @@ private struct ActionRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Text("\(index + 1)")
-                .font(.caption.monospacedDigit())
+                .font(.caption2.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: 22)
+                .frame(width: 22, height: 22)
+                .background(Color.primary.opacity(0.04), in: Capsule())
 
             Image(systemName: icon)
-                .frame(width: 20)
-                .foregroundStyle(.indigo)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(isSelected ? Color.white : Color.indigo)
+                .frame(width: 30, height: 30)
+                .background(
+                    isSelected ? Color.indigo : Color.indigo.opacity(0.09),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -173,17 +216,23 @@ private struct ActionRow: View {
             Spacer()
 
             Button(action: select) {
-                Text(isSelected ? "编辑中" : "编辑")
-                    .font(.caption)
+                Label(
+                    isSelected ? "编辑中" : "编辑",
+                    systemImage: "slider.horizontal.3"
+                )
+                .font(.caption.weight(.medium))
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.bordered)
+            .tint(.indigo)
+            .controlSize(.small)
+            .accessibilityLabel(isSelected ? "当前正在编辑的动作" : "编辑动作")
 
             Button {
                 moveUp?()
             } label: {
                 Image(systemName: "chevron.up")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(KeyToolIconButtonStyle(tint: .secondary))
             .disabled(moveUp == nil)
             .accessibilityLabel("上移动作")
 
@@ -192,28 +241,40 @@ private struct ActionRow: View {
             } label: {
                 Image(systemName: "chevron.down")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(KeyToolIconButtonStyle(tint: .secondary))
             .disabled(moveDown == nil)
             .accessibilityLabel("下移动作")
 
             Button(action: delete) {
                 Image(systemName: "trash")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(KeyToolIconButtonStyle(tint: .red))
             .accessibilityLabel("删除动作")
         }
         .padding(.horizontal, 12)
-        .frame(minHeight: 48)
+        .padding(.vertical, 7)
+        .frame(minHeight: 54)
         .background(
-            isSelected ? Color.indigo.opacity(0.10) : Color.primary.opacity(0.025),
-            in: RoundedRectangle(cornerRadius: 9)
+            rowBackground,
+            in: RoundedRectangle(cornerRadius: 11)
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 9)
-                .stroke(isSelected ? Color.indigo.opacity(0.28) : Color.clear)
+            RoundedRectangle(cornerRadius: 11)
+                .stroke(
+                    isSelected
+                        ? Color.indigo.opacity(0.28)
+                        : Color.primary.opacity(0.055)
+                )
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: select)
+    }
+
+    private var rowBackground: Color {
+        if isSelected {
+            return Color.indigo.opacity(0.095)
+        }
+        return Color.primary.opacity(0.025)
     }
 
     private var icon: String {

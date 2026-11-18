@@ -44,27 +44,39 @@ enum InputEngine {
     ) async throws {
         let source = CGEventSource(stateID: .combinedSessionState)
         let flags = CGEventFlags(rawValue: action.modifiers)
+        let repeatCount = min(
+            max(action.repeatCount, KeyboardAction.repeatCountRange.lowerBound),
+            KeyboardAction.repeatCountRange.upperBound
+        )
 
-        guard
-            let keyDown = CGEvent(
-                keyboardEventSource: source,
-                virtualKey: action.keyCode,
-                keyDown: true
-            ),
-            let keyUp = CGEvent(
-                keyboardEventSource: source,
-                virtualKey: action.keyCode,
-                keyDown: false
-            )
-        else {
-            throw InputError.eventCreationFailed
+        for repetition in 0..<repeatCount {
+            try Task.checkCancellation()
+
+            guard
+                let keyDown = CGEvent(
+                    keyboardEventSource: source,
+                    virtualKey: action.keyCode,
+                    keyDown: true
+                ),
+                let keyUp = CGEvent(
+                    keyboardEventSource: source,
+                    virtualKey: action.keyCode,
+                    keyDown: false
+                )
+            else {
+                throw InputError.eventCreationFailed
+            }
+
+            keyDown.flags = flags
+            keyUp.flags = flags
+            keyDown.postToPid(processID)
+            try await Task.sleep(nanoseconds: 12_000_000)
+            keyUp.postToPid(processID)
+
+            if repetition < repeatCount - 1 {
+                try await Task.sleep(nanoseconds: 12_000_000)
+            }
         }
-
-        keyDown.flags = flags
-        keyUp.flags = flags
-        keyDown.postToPid(processID)
-        try await Task.sleep(nanoseconds: 12_000_000)
-        keyUp.postToPid(processID)
     }
 
     private static func performMouseClick(

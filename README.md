@@ -5,10 +5,10 @@ KeyTool 是一款面向 macOS 和 Windows 的按键助手，用于管理、录�
 ## 功能
 
 - 任务管理页：查看任务状态、执行轮次、计划、快捷键和动作数量
-- 动作编辑：键盘组合、鼠标点击、鼠标移动、滚动、等待
+- 动作编辑：键盘组合（支持重复次数）、鼠标点击、鼠标移动、滚动、等待
 - 操作录制：全局捕获键盘、鼠标点击、滚动和节流后的移动，并自动记录操作间等待时间
 - 执行计划：手动、固定间隔、每日定时
-- 循环控制：手动输入循环次数、无限循环和随时停止
+- 循环控制：手动输入循环次数、无限循环、实时执行时间和随时停止
 - 全局快捷键：为每个任务设置独立启动与停止快捷键
 - 后台运行：macOS 菜单栏、Windows 系统托盘
 - 本地持久化：任务数据保存为 JSON，不依赖网络
@@ -21,21 +21,21 @@ KeyTool 是一款面向 macOS 和 Windows 的按键助手，用于管理、录�
 已构建应用：
 
 ```text
-dist/KeyTool.app
+dist/mac/KeyTool.app
 ```
 
 本地构建：
 
 ```sh
-chmod +x scripts/build-app.sh scripts/check-core.sh
-./scripts/build-app.sh
-open dist/KeyTool.app
+chmod +x mac/scripts/build-app.sh mac/scripts/check-core.sh
+./mac/scripts/build-app.sh
+open dist/mac/KeyTool.app
 ```
 
 核心检查：
 
 ```sh
-./scripts/check-core.sh
+./mac/scripts/check-core.sh
 ```
 
 首次运行后，在“系统设置 → 隐私与安全性 → 辅助功能”中允许 KeyTool。操作录制使用 CoreGraphics Event Tap，同样依赖该权限。
@@ -110,9 +110,12 @@ Windows 任务数据：
 ## 项目结构
 
 ```text
-Sources/KeyTool/                macOS SwiftUI 应用
+mac/Package.swift               macOS Swift Package 配置
+mac/Sources/KeyTool/            macOS SwiftUI 应用源码
+mac/Support/                    macOS 图标资源和 Info.plist
+mac/scripts/                    macOS 构建、检查与图标生成脚本
 windows/KeyTool.Windows/        Windows WPF 应用
-scripts/                       构建、检查与图标生成脚本
-Support/                       macOS 图标资源和 Info.plist
-dist/                          本地构建产物
+scripts/                        Windows 跨平台构建脚本
+dist/mac/                      macOS 通用应用包
+dist/windows/                  Windows x64 程序与压缩包
 ```
