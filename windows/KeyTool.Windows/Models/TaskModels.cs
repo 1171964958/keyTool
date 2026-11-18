@@ -238,8 +238,12 @@ public sealed class TargetWindow : ObservableObject
 
 public sealed class MacroAction : ObservableObject
 {
+    public const int MinRepeatCount = 1;
+    public const int MaxRepeatCount = 10_000;
+
     private ActionKind _kind;
     private ShortcutGesture? _shortcut;
+    private int _repeatCount = 1;
     private double _x;
     private double _y;
     private MouseButtonKind _mouseButton;
@@ -267,6 +271,20 @@ public sealed class MacroAction : ObservableObject
         set
         {
             if (SetProperty(ref _shortcut, value))
+            {
+                NotifyPresentation();
+            }
+        }
+    }
+
+    public int RepeatCount
+    {
+        get => _repeatCount;
+        set
+        {
+            if (SetProperty(
+                    ref _repeatCount,
+                    Math.Clamp(value, MinRepeatCount, MaxRepeatCount)))
             {
                 NotifyPresentation();
             }
@@ -354,7 +372,8 @@ public sealed class MacroAction : ObservableObject
     [JsonIgnore]
     public string Summary => Kind switch
     {
-        ActionKind.Keyboard => Shortcut?.DisplayName ?? "未设置",
+        ActionKind.Keyboard => (Shortcut?.DisplayName ?? "未设置")
+            + (RepeatCount > 1 ? $" × {RepeatCount}" : string.Empty),
         ActionKind.MouseClick => $"{MouseButtonName(MouseButton)} @ {X:0}, {Y:0}",
         ActionKind.MouseMove => $"移动到 {X:0}, {Y:0}",
         ActionKind.Scroll => $"水平 {DeltaX}，垂直 {DeltaY}",
@@ -536,7 +555,7 @@ public sealed class MacroTask : ObservableObject
             }
             else if (KeyboardInputMode == KeyboardInputMode.ForegroundCompatibility)
             {
-                KeyboardInputMode = KeyboardInputMode.BackgroundActivation;
+                KeyboardInputMode = KeyboardInputMode.Adaptive;
             }
         }
     }
@@ -546,10 +565,7 @@ public sealed class MacroTask : ObservableObject
         get => _keyboardInputMode;
         set
         {
-            var normalized = value == KeyboardInputMode.BackgroundActivation
-                ? KeyboardInputMode.Adaptive
-                : value;
-            if (SetProperty(ref _keyboardInputMode, normalized))
+            if (SetProperty(ref _keyboardInputMode, value))
             {
                 OnPropertyChanged(nameof(UseForegroundKeyboardInput));
                 Touch();

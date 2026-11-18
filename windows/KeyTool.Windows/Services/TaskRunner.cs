@@ -40,7 +40,8 @@ public sealed class TaskRunner
         {
             UpdateRuntime(task, () => task.Target = resolvedTarget);
         }
-        if (task.KeyboardInputMode == KeyboardInputMode.Adaptive)
+        if (task.KeyboardInputMode is KeyboardInputMode.Adaptive
+            or KeyboardInputMode.BackgroundActivation)
         {
             WindowInputService.WatchTarget(new IntPtr(resolvedTarget.WindowHandle));
         }
@@ -136,6 +137,7 @@ public sealed class TaskRunner
                             task.Actions[actionIndex],
                             windowHandle,
                             task.KeyboardInputMode,
+                            task.Id,
                             cancellationToken
                         );
                         UpdateRuntime(task, () => task.Runtime.ErrorMessage = null);
@@ -173,6 +175,7 @@ public sealed class TaskRunner
         }
         finally
         {
+            WindowInputService.ReleaseTaskBackgroundActivation(task.Id);
             WindowInputService.TraceTask($"finish task={task.Id}");
             UpdateRuntime(task, task.Runtime.Reset);
             if (_jobs.TryRemove(task.Id, out var cancellationSource))
@@ -204,7 +207,8 @@ public sealed class TaskRunner
         {
             UpdateRuntime(task, () => task.Target = resolvedTarget);
         }
-        if (task.KeyboardInputMode == KeyboardInputMode.Adaptive)
+        if (task.KeyboardInputMode is KeyboardInputMode.Adaptive
+            or KeyboardInputMode.BackgroundActivation)
         {
             WindowInputService.WatchTarget(
                 new IntPtr(resolvedTarget.WindowHandle));

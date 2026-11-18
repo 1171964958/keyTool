@@ -574,6 +574,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 Kind = action.Kind,
                 Shortcut = action.Shortcut?.Clone(),
+                RepeatCount = action.RepeatCount,
                 X = action.X,
                 Y = action.Y,
                 MouseButton = action.MouseButton,

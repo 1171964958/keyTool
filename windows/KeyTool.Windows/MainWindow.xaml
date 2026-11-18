@@ -486,7 +486,7 @@
                                     </ComboBox>
                                 </Grid>
                                 <TextBlock
-                                    Text="“自适应”会按目标当前状态切换：游戏在前台时直接使用前台兼容，切到其他窗口后才使用后台无感；后台部分仍属实验兼容，若异常请切回“前台兼容”。"
+                                    Text="“自适应”在目标前台时使用真实输入；后台任务首次发送时会建立一次受控激活，直到停止任务或真正切回游戏才结束，避免每个技能反复切换焦点。“纯后台消息”完全不激活目标，但部分 Unity 游戏可能忽略按键。"
                                     Style="{StaticResource MutedText}"
                                     TextWrapping="Wrap"
                                     Margin="0,6,0,0" />
@@ -593,12 +593,40 @@
                                                         </StackPanel>
                                                     </Grid>
 
-                                                    <controls:ShortcutCaptureButton
-                                                        Gesture="{Binding Shortcut, Mode=TwoWay}"
-                                                        Style="{StaticResource SecondaryButton}"
+                                                    <StackPanel
+                                                        Orientation="Horizontal"
                                                         HorizontalAlignment="Left"
                                                         Margin="0,9,0,0"
-                                                        Visibility="{Binding IsKeyboard, Converter={StaticResource BoolToVisibility}}" />
+                                                        Visibility="{Binding IsKeyboard, Converter={StaticResource BoolToVisibility}}">
+                                                        <controls:ShortcutCaptureButton
+                                                            Gesture="{Binding Shortcut, Mode=TwoWay}"
+                                                            Style="{StaticResource SecondaryButton}" />
+                                                        <Border
+                                                            Background="#FAFAFC"
+                                                            BorderBrush="{StaticResource BorderBrush}"
+                                                            BorderThickness="1"
+                                                            CornerRadius="8"
+                                                            Margin="9,0,0,0"
+                                                            Padding="10,0"
+                                                            Height="34">
+                                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                                <TextBlock
+                                                                    Text="次数"
+                                                                    Foreground="{StaticResource MutedBrush}"
+                                                                    VerticalAlignment="Center" />
+                                                                <TextBox
+                                                                    Width="58"
+                                                                    MaxLength="5"
+                                                                    Text="{Binding RepeatCount, UpdateSourceTrigger=PropertyChanged, ValidatesOnExceptions=True}"
+                                                                    TextAlignment="Right"
+                                                                    Margin="8,0,0,0"
+                                                                    Padding="7,4"
+                                                                    MinHeight="0"
+                                                                    BorderThickness="1"
+                                                                    ToolTip="重复发送此按键的次数，范围 1 到 10,000" />
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
 
                                                     <Grid Margin="0,9,0,0" Visibility="{Binding IsMouseClick, Converter={StaticResource BoolToVisibility}}">
                                                         <Grid.ColumnDefinitions>

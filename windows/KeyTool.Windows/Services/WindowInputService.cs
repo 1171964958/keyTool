@@ -70,6 +70,9 @@ public static class WindowInputService
         uint eventTime);
 
     private static readonly ConcurrentDictionary<IntPtr, byte> BackgroundTargets = new();
+    private static readonly ConcurrentDictionary<Guid, IntPtr> TaskBackgroundTargets = new();
+    private static readonly ConcurrentDictionary<IntPtr, int> BackgroundTargetReferences = new();
+    private static readonly ConcurrentDictionary<IntPtr, long> BackgroundActivatedTargets = new();
     private static readonly ConcurrentDictionary<IntPtr, DateTime> RecoveryUntil = new();
     private static readonly ConcurrentDictionary<(IntPtr Target, int Key, bool IsAlt), byte>
         TrackedKeys = new();
@@ -78,6 +81,7 @@ public static class WindowInputService
         (IntPtr Window, IntPtr Point)>
         TrackedMouseButtons = new();
     private static readonly object ForegroundHookLock = new();
+    private static readonly object BackgroundActivationLock = new();
     private static readonly object TraceLock = new();
     private static readonly SemaphoreSlim AdaptiveInputGate = new(1, 1);
     private static WinEventDelegate? _foregroundHookDelegate;
@@ -85,6 +89,7 @@ public static class WindowInputService
     private static Thread? _foregroundHookThread;
     private static uint _foregroundHookThreadId;
     private static ManualResetEventSlim? _foregroundHookReady;
+    private static long _foregroundEpoch;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Point
@@ -257,24 +262,6 @@ public static class WindowInputService
     private static extern bool SetForegroundWindow(IntPtr windowHandle);
 
     [DllImport("user32.dll")]
-    private static extern void keybd_event(
-        byte virtualKey,
-        byte scanCode,
-        uint flags,
-        UIntPtr extraInfo);
-
-    [DllImport("user32.dll")]
-    private static extern void mouse_event(
-        uint flags,
-        int x,
-        int y,
-        uint data,
-        UIntPtr extraInfo);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr SetFocus(IntPtr windowHandle);
-
-    [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr windowHandle, uint command);
 
     [DllImport("user32.dll")]
@@ -376,18 +363,19 @@ public static class WindowInputService
         MacroAction action,
         IntPtr windowHandle,
         KeyboardInputMode keyboardInputMode,
+        Guid taskId,
         CancellationToken cancellationToken)
     {
-        if (keyboardInputMode == KeyboardInputMode.BackgroundActivation)
-        {
-            keyboardInputMode = KeyboardInputMode.Adaptive;
-        }
-        if (keyboardInputMode == KeyboardInputMode.Adaptive)
+        var usesManagedBackgroundActivation =
+            keyboardInputMode is KeyboardInputMode.Adaptive
+                or KeyboardInputMode.BackgroundActivation;
+        if (usesManagedBackgroundActivation)
         {
             WatchTarget(windowHandle);
         }
         else
         {
+            ReleaseTaskBackgroundActivation(taskId);
             UnwatchTarget(windowHandle);
         }
         Trace(
@@ -396,12 +384,14 @@ public static class WindowInputService
             + $"foreground=0x{GetForegroundWindow().ToInt64():X} "
             + $"targetForeground={IsWindowInForeground(windowHandle)}");
 
-        if (keyboardInputMode == KeyboardInputMode.Adaptive)
+        if (usesManagedBackgroundActivation)
         {
             await WaitForRecoveryWindowAsync(windowHandle, cancellationToken);
         }
 
-        var coordinateAdaptiveInput = keyboardInputMode == KeyboardInputMode.Adaptive
+        var coordinateAdaptiveInput =
+            (keyboardInputMode is KeyboardInputMode.Adaptive
+                or KeyboardInputMode.BackgroundActivation)
             && action.Kind is ActionKind.Keyboard or ActionKind.MouseClick;
         if (coordinateAdaptiveInput)
         {
@@ -420,7 +410,7 @@ public static class WindowInputService
             {
                 case ActionKind.Keyboard:
                     if (keyboardInputMode == KeyboardInputMode.ForegroundCompatibility
-                        || (keyboardInputMode == KeyboardInputMode.Adaptive
+                        || (usesManagedBackgroundActivation
                             && IsWindowInForeground(windowHandle)))
                     {
                         await SendKeyboardInForegroundAsync(
@@ -428,11 +418,12 @@ public static class WindowInputService
                             windowHandle,
                             cancellationToken);
                     }
-                    else if (keyboardInputMode == KeyboardInputMode.Adaptive)
+                    else if (usesManagedBackgroundActivation)
                     {
                         await SendKeyboardWithBackgroundActivationAsync(
                             action,
                             windowHandle,
+                            taskId,
                             cancellationToken);
                     }
                     else
@@ -445,7 +436,7 @@ public static class WindowInputService
                     break;
                 case ActionKind.MouseClick:
                     if (keyboardInputMode == KeyboardInputMode.ForegroundCompatibility
-                        || (keyboardInputMode == KeyboardInputMode.Adaptive
+                        || (usesManagedBackgroundActivation
                             && IsWindowInForeground(windowHandle)))
                     {
                         await SendMouseClickInForegroundAsync(
@@ -453,11 +444,12 @@ public static class WindowInputService
                             windowHandle,
                             cancellationToken);
                     }
-                    else if (keyboardInputMode == KeyboardInputMode.Adaptive)
+                    else if (usesManagedBackgroundActivation)
                     {
                         await SendMouseClickWithBackgroundActivationAsync(
                             action,
                             windowHandle,
+                            taskId,
                             cancellationToken);
                     }
                     else
@@ -518,6 +510,7 @@ public static class WindowInputService
             hookThread.Join(TimeSpan.FromSeconds(1));
         }
 
+        ReleaseAllBackgroundActivations();
         BackgroundTargets.Clear();
         RecoveryUntil.Clear();
         TrackedKeys.Clear();
@@ -561,29 +554,68 @@ public static class WindowInputService
     {
         var shortcut = action.Shortcut
             ?? throw new InvalidOperationException("按键动作尚未设置具体按键。");
-
-        var modifierKeys = GetModifierKeys(shortcut);
         var messageWindow = GetKeyboardMessageWindow(windowHandle);
+        var repeatCount = GetKeyboardRepeatCount(action);
 
-        foreach (var modifierKey in modifierKeys)
+        for (var repetition = 0; repetition < repeatCount; repetition++)
         {
-            PostKey(messageWindow, modifierKey, keyUp: false, isAlt: false);
-        }
+            cancellationToken.ThrowIfCancellationRequested();
+            var modifierKeys = GetModifierKeys(shortcut);
+            var isAlt = shortcut.Modifiers.HasFlag(ModifierKeys.Alt);
+            var primaryKeyDown = false;
 
-        var isAlt = shortcut.Modifiers.HasFlag(ModifierKeys.Alt);
-        PostKey(messageWindow, shortcut.VirtualKey, keyUp: false, isAlt: isAlt);
-        await Task.Delay(12, cancellationToken);
-        PostKey(messageWindow, shortcut.VirtualKey, keyUp: true, isAlt: isAlt);
+            try
+            {
+                foreach (var modifierKey in modifierKeys)
+                {
+                    PostKey(messageWindow, modifierKey, keyUp: false, isAlt: false);
+                }
 
-        for (var index = modifierKeys.Count - 1; index >= 0; index--)
-        {
-            PostKey(messageWindow, modifierKeys[index], keyUp: true, isAlt: false);
+                PostKey(
+                    messageWindow,
+                    shortcut.VirtualKey,
+                    keyUp: false,
+                    isAlt: isAlt);
+                primaryKeyDown = true;
+                await Task.Delay(12, cancellationToken);
+                PostKey(
+                    messageWindow,
+                    shortcut.VirtualKey,
+                    keyUp: true,
+                    isAlt: isAlt);
+                primaryKeyDown = false;
+            }
+            finally
+            {
+                if (primaryKeyDown)
+                {
+                    PostKey(
+                        messageWindow,
+                        shortcut.VirtualKey,
+                        keyUp: true,
+                        isAlt: isAlt);
+                }
+                for (var index = modifierKeys.Count - 1; index >= 0; index--)
+                {
+                    PostKey(
+                        messageWindow,
+                        modifierKeys[index],
+                        keyUp: true,
+                        isAlt: false);
+                }
+            }
+
+            if (repetition < repeatCount - 1)
+            {
+                await Task.Delay(12, cancellationToken);
+            }
         }
     }
 
     private static async Task SendKeyboardWithBackgroundActivationAsync(
         MacroAction action,
         IntPtr windowHandle,
+        Guid taskId,
         CancellationToken cancellationToken)
     {
         var shortcut = action.Shortcut
@@ -598,37 +630,14 @@ public static class WindowInputService
             return;
         }
 
-        var previousForeground = GetForegroundWindow();
         var messageWindow = GetKeyboardMessageWindow(windowHandle);
-        var targetThreadId = GetWindowThreadProcessId(windowHandle, out _);
-        var activationAttempted = false;
         WatchBackgroundTarget(windowHandle);
-
-        try
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            activationAttempted = true;
-            ActivateWindowWithMessages(
-                windowHandle,
-                messageWindow,
-                previousForeground,
-                targetThreadId);
-            await SendKeyboardMessagesAsync(
-                shortcut,
-                messageWindow,
-                cancellationToken);
-        }
-        finally
-        {
-            if (activationAttempted)
-            {
-                RestoreWindowAfterFakeActivation(
-                    windowHandle,
-                    messageWindow,
-                    previousForeground,
-                    targetThreadId);
-            }
-        }
+        EnsureBackgroundActivation(taskId, windowHandle, messageWindow);
+        await SendKeyboardMessagesAsync(
+            shortcut,
+            messageWindow,
+            GetKeyboardRepeatCount(action),
+            cancellationToken);
     }
 
     private static void ActivateWindowWithMessages(
@@ -692,6 +701,134 @@ public static class WindowInputService
         }
     }
 
+    private static void EnsureBackgroundActivation(
+        Guid taskId,
+        IntPtr windowHandle,
+        IntPtr messageWindow)
+    {
+        var targetWindow = GetAncestor(windowHandle, GaRoot);
+
+        lock (BackgroundActivationLock)
+        {
+            if (TaskBackgroundTargets.TryGetValue(taskId, out var previousTarget)
+                && previousTarget != targetWindow)
+            {
+                ReleaseTaskBackgroundActivationUnderLock(taskId);
+            }
+
+            if (!TaskBackgroundTargets.ContainsKey(taskId))
+            {
+                TaskBackgroundTargets[taskId] = targetWindow;
+                BackgroundTargetReferences.AddOrUpdate(
+                    targetWindow,
+                    1,
+                    (_, count) => count + 1);
+            }
+
+            var foregroundEpoch = Volatile.Read(ref _foregroundEpoch);
+            if ((BackgroundActivatedTargets.TryGetValue(
+                    targetWindow,
+                    out var activeEpoch)
+                    && activeEpoch == foregroundEpoch)
+                || IsWindowInForeground(targetWindow))
+            {
+                return;
+            }
+
+            var previousForeground = GetForegroundWindow();
+            var targetThreadId = GetWindowThreadProcessId(targetWindow, out _);
+            ActivateWindowWithMessages(
+                targetWindow,
+                messageWindow,
+                previousForeground,
+                targetThreadId);
+            BackgroundActivatedTargets[targetWindow] = foregroundEpoch;
+            if (IsWindowInForeground(targetWindow))
+            {
+                BackgroundActivatedTargets.TryRemove(targetWindow, out _);
+                return;
+            }
+            Trace(
+                $"background-activate target=0x{targetWindow.ToInt64():X} "
+                + $"task={taskId} mode=managed-lease");
+        }
+    }
+
+    public static void ReleaseTaskBackgroundActivation(Guid taskId)
+    {
+        lock (BackgroundActivationLock)
+        {
+            ReleaseTaskBackgroundActivationUnderLock(taskId);
+        }
+    }
+
+    private static void ReleaseTaskBackgroundActivationUnderLock(Guid taskId)
+    {
+        if (!TaskBackgroundTargets.TryRemove(taskId, out var targetWindow))
+        {
+            return;
+        }
+
+        if (!BackgroundTargetReferences.TryGetValue(targetWindow, out var references))
+        {
+            return;
+        }
+
+        if (references > 1)
+        {
+            BackgroundTargetReferences[targetWindow] = references - 1;
+            return;
+        }
+
+        BackgroundTargetReferences.TryRemove(targetWindow, out _);
+        if (!BackgroundActivatedTargets.TryRemove(targetWindow, out _))
+        {
+            return;
+        }
+
+        if (IsWindow(targetWindow) && !IsWindowInForeground(targetWindow))
+        {
+            var messageWindow = GetKeyboardMessageWindow(targetWindow);
+            var previousForeground = GetForegroundWindow();
+            var targetThreadId = GetWindowThreadProcessId(targetWindow, out _);
+            RestoreWindowAfterFakeActivation(
+                targetWindow,
+                messageWindow,
+                previousForeground,
+                targetThreadId);
+        }
+
+        Trace(
+            $"background-release target=0x{targetWindow.ToInt64():X} "
+            + $"task={taskId}");
+    }
+
+    private static void InvalidateBackgroundActivations(IntPtr foregroundWindow)
+    {
+        lock (BackgroundActivationLock)
+        {
+            foreach (var targetWindow in BackgroundActivatedTargets.Keys.ToArray())
+            {
+                BackgroundActivatedTargets.TryRemove(targetWindow, out _);
+                Trace(
+                    $"background-suspend target=0x{targetWindow.ToInt64():X} "
+                    + $"reason=foreground-changed "
+                    + $"foreground=0x{foregroundWindow.ToInt64():X}");
+            }
+        }
+    }
+
+    private static void ReleaseAllBackgroundActivations()
+    {
+        lock (BackgroundActivationLock)
+        {
+            foreach (var taskId in TaskBackgroundTargets.Keys.ToArray())
+            {
+                ReleaseTaskBackgroundActivationUnderLock(taskId);
+            }
+        }
+    }
+
     private static void RestoreRealActivationState(
         IntPtr windowHandle,
         IntPtr messageWindow,
@@ -716,6 +853,38 @@ public static class WindowInputService
     }
 
     private static async Task SendKeyboardMessagesAsync(
+        ShortcutGesture shortcut,
+        IntPtr messageWindow,
+        int repeatCount,
+        CancellationToken cancellationToken)
+    {
+        repeatCount = Math.Clamp(
+            repeatCount,
+            MacroAction.MinRepeatCount,
+            MacroAction.MaxRepeatCount);
+        var targetWindow = GetAncestor(messageWindow, GaRoot);
+
+        for (var repetition = 0; repetition < repeatCount; repetition++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (IsWindowInForeground(targetWindow))
+            {
+                return;
+            }
+
+            await SendSingleKeyboardMessagesAsync(
+                shortcut,
+                messageWindow,
+                cancellationToken);
+
+            if (repetition < repeatCount - 1)
+            {
+                await Task.Delay(12, cancellationToken);
+            }
+        }
+    }
+
+    private static async Task SendSingleKeyboardMessagesAsync(
         ShortcutGesture shortcut,
         IntPtr messageWindow,
         CancellationToken cancellationToken)
@@ -842,7 +1011,16 @@ public static class WindowInputService
                     "无法激活目标窗口。若目标以管理员身份运行，请同样以管理员身份运行 KeyTool。");
             }
 
-            SendKeyboardInput(shortcut);
+            var repeatCount = GetKeyboardRepeatCount(action);
+            for (var repetition = 0; repetition < repeatCount; repetition++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                SendKeyboardInput(shortcut);
+                if (repetition < repeatCount - 1)
+                {
+                    await Task.Delay(12, cancellationToken);
+                }
+            }
             await Task.Delay(targetWasForeground ? 12 : 40, cancellationToken);
         }
         finally
@@ -911,6 +1089,14 @@ public static class WindowInputService
                 }
             }
         };
+    }
+
+    private static int GetKeyboardRepeatCount(MacroAction action)
+    {
+        return Math.Clamp(
+            action.RepeatCount,
+            MacroAction.MinRepeatCount,
+            MacroAction.MaxRepeatCount);
     }
 
     private static List<int> GetModifierKeys(ShortcutGesture shortcut)
@@ -1044,26 +1230,29 @@ public static class WindowInputService
         }
 
         var rootWindow = GetAncestor(windowHandle, GaRoot);
+        var foregroundWindow = GetForegroundWindow();
+        if (foregroundWindow == IntPtr.Zero
+            || GetAncestor(foregroundWindow, GaRoot) != rootWindow)
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref _foregroundEpoch);
+        InvalidateBackgroundActivations(rootWindow);
+
         if (!BackgroundTargets.ContainsKey(rootWindow))
         {
             return;
         }
 
         var messageWindow = GetKeyboardMessageWindow(rootWindow);
-        var targetThreadId = GetWindowThreadProcessId(rootWindow, out _);
-        RestoreRealActivationState(
-            rootWindow,
-            messageWindow,
-            IntPtr.Zero,
-            targetThreadId);
-        ResetTargetInputState(rootWindow, messageWindow);
+        ReleaseTrackedInputState(rootWindow, messageWindow);
         Trace(
-            $"repair-immediate target=0x{rootWindow.ToInt64():X} "
-            + $"focus=0x{messageWindow.ToInt64():X} reset=target-key-state");
+            $"foreground-release target=0x{rootWindow.ToInt64():X} "
+            + $"focus=0x{messageWindow.ToInt64():X} released=tracked-input-state");
         Trace($"foreground-enter target=0x{rootWindow.ToInt64():X}");
         RecoveryUntil[rootWindow] = DateTime.UtcNow.AddMilliseconds(1500);
         Trace($"recovery-window target=0x{rootWindow.ToInt64():X} duration=1500ms");
-        RepairForegroundInputState(rootWindow);
     }
 
     private static async Task WaitForRecoveryWindowAsync(
@@ -1083,70 +1272,6 @@ public static class WindowInputService
             await Task.Delay(
                 TimeSpan.FromMilliseconds(Math.Min(100, remaining.TotalMilliseconds)),
                 cancellationToken);
-        }
-    }
-
-    private static void RepairForegroundInputState(IntPtr windowHandle)
-    {
-        if (!AdaptiveInputGate.Wait(500))
-        {
-            Trace($"repair-gate-timeout target=0x{windowHandle.ToInt64():X}");
-            return;
-        }
-        try
-        {
-            try
-            {
-                if (!IsWindow(windowHandle))
-                {
-                    return;
-                }
-
-                var targetIsForeground = IsWindowInForeground(windowHandle);
-                ForegroundInputSession? activateSession = null;
-                try
-                {
-                    if (targetIsForeground)
-                    {
-                        activateSession = new ForegroundInputSession(windowHandle);
-                        if (!activateSession.Activate(windowHandle))
-                        {
-                            Trace($"repair-activate-failed target=0x{windowHandle.ToInt64():X}");
-                            return;
-                        }
-                    }
-
-                    var targetThreadId = GetWindowThreadProcessId(windowHandle, out _);
-                    var messageWindow = GetKeyboardMessageWindow(windowHandle);
-                    if (targetIsForeground)
-                    {
-                        SetFocus(messageWindow);
-                    }
-                    RestoreRealActivationState(
-                        windowHandle,
-                        messageWindow,
-                        IntPtr.Zero,
-                        targetThreadId);
-                    ResetPhysicalInputState(windowHandle, messageWindow);
-                    Trace(
-                        $"repair-done target=0x{windowHandle.ToInt64():X} "
-                        + $"focus=0x{messageWindow.ToInt64():X} "
-                        + $"foreground={targetIsForeground} reset=all-key-state");
-                }
-                finally
-                {
-                    activateSession?.Dispose();
-                }
-            }
-            catch
-            {
-                // A later foreground event or the next action will retry the repair.
-                Trace($"repair-error target=0x{windowHandle.ToInt64():X}");
-            }
-        }
-        finally
-        {
-            AdaptiveInputGate.Release();
         }
     }
 
@@ -1188,76 +1313,6 @@ public static class WindowInputService
         }
     }
 
-    private static void ResetPhysicalInputState(
-        IntPtr windowHandle,
-        IntPtr messageWindow)
-    {
-        ResetTargetInputState(windowHandle, messageWindow);
-
-        var isForeground = IsWindowInForeground(windowHandle);
-        if (!isForeground)
-        {
-            return;
-        }
-
-        foreach (var virtualKey in new[]
-        {
-            VkShift,
-            VkControl,
-            VkAlt,
-            VkLeftWindows
-        })
-        {
-            keybd_event(
-                (byte)virtualKey,
-                0,
-                KeyEventKeyUp,
-                UIntPtr.Zero);
-        }
-
-        mouse_event(MouseEventLeftUp, 0, 0, 0, UIntPtr.Zero);
-        mouse_event(MouseEventRightUp, 0, 0, 0, UIntPtr.Zero);
-        mouse_event(MouseEventMiddleUp, 0, 0, 0, UIntPtr.Zero);
-        mouse_event(MouseEventMove, 0, 0, 0, UIntPtr.Zero);
-
-        var keyUps = new List<Input>(0xFE - 0x08 + 1);
-        for (var virtualKey = 0x08; virtualKey <= 0xFE; virtualKey++)
-        {
-            keyUps.Add(CreateKeyboardInput(virtualKey, keyUp: true));
-        }
-        SendInput(
-            (uint)keyUps.Count,
-            keyUps.ToArray(),
-            Marshal.SizeOf<Input>());
-        Thread.Sleep(20);
-    }
-
-    private static void ResetTargetInputState(
-        IntPtr windowHandle,
-        IntPtr messageWindow)
-    {
-        for (var virtualKey = 0x08; virtualKey <= 0xFE; virtualKey++)
-        {
-            PostMessage(
-                messageWindow,
-                WmKeyUp,
-                new IntPtr(virtualKey),
-                GetKeyMessageParameters(virtualKey, keyUp: true));
-            if (virtualKey is 0x12 or 0xA4 or 0xA5)
-            {
-                PostMessage(
-                    messageWindow,
-                    WmSysKeyUp,
-                    new IntPtr(virtualKey),
-                    GetKeyMessageParameters(virtualKey, keyUp: true));
-            }
-        }
-        TrySendWindowMessage(messageWindow, WmLButtonUp, IntPtr.Zero, IntPtr.Zero);
-        TrySendWindowMessage(messageWindow, WmRButtonUp, IntPtr.Zero, IntPtr.Zero);
-        TrySendWindowMessage(messageWindow, WmMButtonUp, IntPtr.Zero, IntPtr.Zero);
-        ReleaseTrackedInputState(windowHandle, messageWindow);
-    }
-
     private static bool TrySendMouseUpMessage(
         IntPtr windowHandle,
         MouseButtonKind button,
@@ -1279,6 +1334,7 @@ public static class WindowInputService
     private static async Task SendMouseClickWithBackgroundActivationAsync(
         MacroAction action,
         IntPtr windowHandle,
+        Guid taskId,
         CancellationToken cancellationToken)
     {
         if (IsWindowInForeground(windowHandle))
@@ -1290,39 +1346,15 @@ public static class WindowInputService
             return;
         }
 
-        var previousForeground = GetForegroundWindow();
-        var targetThreadId = GetWindowThreadProcessId(windowHandle, out _);
         var screenPoint = new Point { X = (int)action.X, Y = (int)action.Y };
         var messageWindow = GetMouseMessageWindow(windowHandle, screenPoint);
-        var activationAttempted = false;
         WatchBackgroundTarget(windowHandle);
-
-        try
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            activationAttempted = true;
-            ActivateWindowWithMessages(
-                windowHandle,
-                messageWindow,
-                previousForeground,
-                targetThreadId);
-            await SendMouseClickMessagesAsync(
-                action,
-                messageWindow,
-                screenPoint,
-                cancellationToken);
-        }
-        finally
-        {
-            if (activationAttempted)
-            {
-                RestoreWindowAfterFakeActivation(
-                    windowHandle,
-                    messageWindow,
-                    previousForeground,
-                    targetThreadId);
-            }
-        }
+        EnsureBackgroundActivation(taskId, windowHandle, messageWindow);
+        await SendMouseClickMessagesAsync(
+            action,
+            messageWindow,
+            screenPoint,
+            cancellationToken);
     }
 
     private static async Task SendMouseClickMessagesAsync(
